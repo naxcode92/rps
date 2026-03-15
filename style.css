@@ -5,39 +5,29 @@
   This means if you want to change the color palette (say, from
   Game Boy green to Game Boy Pocket gray), you change it HERE
   and the ENTIRE game updates. No hunting through the file.
-
-  These are inspired by:
-  - Original Game Boy screen colors (the greens)
-  - Pokemon Red/Blue UI colors (red, blue, gold)
 */
 :root {
-  --gb-lightest: #9bbc0f;   /* Game Boy lightest green */
-  --gb-light: #8bac0f;      /* Game Boy light green */
-  --gb-dark: #306230;        /* Game Boy dark green */
-  --gb-darkest: #0f380f;     /* Game Boy darkest green */
+  --gb-lightest: #9bbc0f;
+  --gb-light: #8bac0f;
+  --gb-dark: #306230;
+  --gb-darkest: #0f380f;
 
-  --poke-red: #e3350d;       /* Pokemon Red accent */
-  --poke-blue: #3b4cca;      /* Pokemon Blue accent */
-  --poke-gold: #ffcb05;      /* Pokemon Gold/Yellow */
-  --poke-gold-dark: #c7a008; /* Darker gold for borders */
+  --poke-red: #e3350d;
+  --poke-blue: #3b4cca;
+  --poke-gold: #ffcb05;
+  --poke-gold-dark: #c7a008;
 
-  --bg-cream: #f8f8e8;       /* Light background for gameplay screens */
-  --bg-battle: #e8e8d0;      /* Battle scene background */
-  --text-dark: #1a1a2e;      /* Near-black for readability */
-  --text-light: #f0f0e0;     /* Light text on dark backgrounds */
+  --bg-cream: #f8f8e8;
+  --bg-battle: #e8e8d0;
+  --text-dark: #1a1a2e;
+  --text-light: #f0f0e0;
 
-  /* HP bar widths — updated by JavaScript */
   --p1-hp: 100%;
   --p2-hp: 100%;
 }
 
-/*
-  TEACHING: CSS Reset (minimal)
+/* ========== RESET ========== */
 
-  We reset just enough to remove browser inconsistencies.
-  box-sizing: border-box means padding is included in width/height
-  calculations — no more "why is my element bigger than I said?!" bugs.
-*/
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
@@ -52,24 +42,13 @@ body {
   align-items: center;
   justify-content: center;
   padding: 8px;
-
-  /*
-    TEACHING: overscroll-behavior
-    Prevents the "pull to refresh" gesture on mobile Chrome.
-    Without this, players might accidentally refresh mid-game!
-  */
   overscroll-behavior: none;
   -webkit-user-select: none;
   user-select: none;
 }
 
-/*
-  TEACHING: The Game Boy Frame
+/* ========== GAME FRAME ========== */
 
-  This single div creates the "screen" look of a Game Boy.
-  We use max-width to cap it on desktop, but on mobile it fills
-  the viewport. aspect-ratio keeps the proportions consistent.
-*/
 #game-frame {
   width: 100%;
   max-width: 420px;
@@ -86,17 +65,8 @@ body {
   position: relative;
 }
 
-/*
-  TEACHING: State-Based Screen Visibility
+/* ========== STATE-BASED VISIBILITY ========== */
 
-  This is the KEY architectural pattern. Every section is hidden by default.
-  When we set data-state="title" on #game-frame, ONLY #screen-title is shown.
-
-  JavaScript does: gameFrame.dataset.state = 'p1-choose';
-  CSS does: shows #screen-p1-choose, hides everything else.
-
-  This is MUCH cleaner than toggling classList on 8 different elements!
-*/
 #game-frame > section {
   display: none;
   width: 100%;
@@ -105,9 +75,9 @@ body {
 }
 
 #game-frame[data-state="title"] #screen-title,
-#game-frame[data-state="p1-choose"] #screen-p1-choose,
-#game-frame[data-state="handoff"] #screen-handoff,
-#game-frame[data-state="p2-choose"] #screen-p2-choose,
+#game-frame[data-state="lobby"] #screen-lobby,
+#game-frame[data-state="waiting"] #screen-waiting,
+#game-frame[data-state="choose"] #screen-choose,
 #game-frame[data-state="battle"] #screen-battle,
 #game-frame[data-state="result"] #screen-result,
 #game-frame[data-state="gameover"] #screen-gameover,
@@ -155,13 +125,6 @@ body {
 
 /* ========== RETRO BUTTON ========== */
 
-/*
-  TEACHING: Touch-friendly buttons
-
-  - min-height: 48px meets accessibility guidelines for tap targets
-  - touch-action: manipulation removes the 300ms tap delay on mobile
-  - The :active state gives tactile feedback (button "pushes down")
-*/
 .btn-retro {
   font-family: 'Press Start 2P', monospace;
   font-size: 12px;
@@ -181,10 +144,147 @@ body {
   transform: scale(0.95) translateY(2px);
 }
 
+.btn-retro:disabled {
+  opacity: 0.5;
+  cursor: default;
+  transform: none;
+}
+
+.btn-small {
+  font-size: 9px;
+  padding: 10px 18px;
+  min-height: 36px;
+}
+
+/* ========== LOBBY SCREEN ========== */
+
+#screen-lobby {
+  background: linear-gradient(180deg, var(--gb-darkest) 0%, #1a2a1a 100%);
+  align-items: center;
+  justify-content: center;
+}
+
+.lobby-content {
+  text-align: center;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+
+.lobby-title {
+  font-size: 22px;
+  color: var(--poke-gold);
+  text-shadow: 3px 3px 0 rgba(0, 0, 0, 0.4);
+  letter-spacing: 4px;
+}
+
+.lobby-divider {
+  font-size: 10px;
+  color: var(--gb-light);
+  letter-spacing: 2px;
+}
+
+.join-group {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.code-input {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 18px;
+  width: 120px;
+  padding: 12px;
+  text-align: center;
+  background: var(--bg-cream);
+  color: var(--gb-darkest);
+  border: 4px solid var(--gb-darkest);
+  border-radius: 8px;
+  letter-spacing: 6px;
+  text-transform: uppercase;
+  outline: none;
+}
+
+.code-input::placeholder {
+  color: var(--gb-dark);
+  opacity: 0.4;
+  letter-spacing: 4px;
+  font-size: 12px;
+}
+
+.code-input:focus {
+  border-color: var(--poke-gold);
+  box-shadow: 0 0 0 2px var(--poke-gold-dark);
+}
+
+.lobby-error {
+  font-size: 8px;
+  color: var(--poke-red);
+  min-height: 16px;
+}
+
+/* ========== WAITING SCREEN ========== */
+
+#screen-waiting {
+  background: linear-gradient(180deg, #1a1a2e 0%, #2d2d44 100%);
+  align-items: center;
+  justify-content: center;
+}
+
+.waiting-content {
+  text-align: center;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+
+.waiting-icon {
+  font-size: 48px;
+}
+
+.waiting-text {
+  font-size: 11px;
+  color: var(--text-light);
+  letter-spacing: 2px;
+}
+
+.room-code-display {
+  background: rgba(0, 0, 0, 0.3);
+  border: 3px solid var(--poke-gold);
+  border-radius: 12px;
+  padding: 20px 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.room-code-label {
+  font-size: 8px;
+  color: var(--poke-gold);
+  letter-spacing: 3px;
+}
+
+.room-code {
+  font-size: 36px;
+  color: var(--text-light);
+  letter-spacing: 12px;
+  text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.5);
+}
+
+.room-code-hint {
+  font-size: 7px;
+  color: var(--gb-light);
+  opacity: 0.8;
+}
+
 /* ========== CHOOSE SCREEN ========== */
 
-#screen-p1-choose,
-#screen-p2-choose {
+#screen-choose {
   background: var(--bg-cream);
 }
 
@@ -222,13 +322,6 @@ body {
   white-space: nowrap;
 }
 
-/*
-  TEACHING: HP Bars with CSS Custom Properties
-
-  The bar width is driven by --p1-hp / --p2-hp variables.
-  JavaScript sets: document.documentElement.style.setProperty('--p1-hp', '66%')
-  CSS transitions the width change smoothly. No DOM manipulation for animation!
-*/
 .hp-track {
   flex: 1;
   height: 10px;
@@ -279,7 +372,7 @@ body {
   margin-bottom: 4px;
 }
 
-/* 5-Second Countdown Timer Bar */
+/* Countdown Timer Bar */
 .timer-track {
   width: 80%;
   height: 12px;
@@ -289,14 +382,6 @@ body {
   border: 2px solid var(--gb-darkest);
 }
 
-/*
-  TEACHING: CSS Animations for the Timer
-
-  The timer bar shrinks from 100% to 0% width over 5 seconds.
-  We use a CSS animation rather than JavaScript intervals for the
-  visual — it's smoother (GPU-accelerated) and uses less battery.
-  The JS timer runs separately to handle the actual game logic.
-*/
 .timer-fill {
   height: 100%;
   width: 100%;
@@ -340,14 +425,25 @@ body {
   border-radius: 12px;
   cursor: pointer;
   touch-action: manipulation;
-  transition: transform 0.1s, background 0.15s;
+  transition: transform 0.1s, background 0.15s, opacity 0.3s;
   gap: 6px;
   font-family: 'Press Start 2P', monospace;
 }
 
-.btn-choice:active {
+.btn-choice:active:not(:disabled) {
   transform: scale(0.92) translateY(3px);
   background: var(--gb-light);
+}
+
+.btn-choice.selected {
+  background: var(--poke-gold);
+  border-color: var(--poke-gold-dark);
+  transform: scale(1.05);
+}
+
+.btn-choice.disabled-choice {
+  opacity: 0.3;
+  cursor: default;
 }
 
 .choice-emoji {
@@ -359,36 +455,6 @@ body {
   font-size: 7px;
   color: var(--gb-darkest);
   letter-spacing: 1px;
-}
-
-/* ========== HANDOFF SCREEN ========== */
-
-#screen-handoff {
-  background: linear-gradient(180deg, #1a1a2e 0%, #2d2d44 100%);
-  align-items: center;
-  justify-content: center;
-}
-
-.handoff-content {
-  text-align: center;
-  padding: 24px;
-}
-
-.handoff-icon {
-  font-size: 48px;
-  margin-bottom: 24px;
-}
-
-.handoff-text {
-  font-size: 14px;
-  color: var(--text-light);
-  margin-bottom: 12px;
-}
-
-.handoff-player {
-  font-size: 24px;
-  margin-bottom: 36px;
-  text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.3);
 }
 
 /* ========== BATTLE SCREEN ========== */
@@ -456,13 +522,6 @@ body {
   font-weight: bold;
 }
 
-/*
-  TEACHING: The Battle Text Box
-
-  This mimics the Pokemon text box at the bottom of battle screens.
-  The typewriter effect is done in JavaScript, but the box itself
-  is styled to look exactly like the classic Pokemon dialog.
-*/
 .battle-textbox {
   width: 100%;
   min-height: 80px;
@@ -547,7 +606,21 @@ body {
   color: var(--gb-darkest);
 }
 
-/* Winner gets a special background */
+.gameover-buttons {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.rematch-status {
+  font-size: 8px;
+  color: var(--poke-gold);
+  min-height: 16px;
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.3);
+}
+
 #screen-gameover.p1-wins {
   background: linear-gradient(180deg, #2a3a6a 0%, #1a2a4a 100%);
   color: var(--text-light);
@@ -555,6 +628,11 @@ body {
 
 #screen-gameover.p2-wins {
   background: linear-gradient(180deg, #6a2a2a 0%, #4a1a1a 100%);
+  color: var(--text-light);
+}
+
+#screen-gameover.p1-wins .gameover-score,
+#screen-gameover.p2-wins .gameover-score {
   color: var(--text-light);
 }
 
@@ -624,17 +702,45 @@ body {
   opacity: 0.7;
 }
 
+/* ========== DISCONNECT OVERLAY ========== */
+
+.disconnect-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  border-radius: 12px;
+}
+
+.disconnect-overlay.hidden {
+  display: none;
+}
+
+.disconnect-content {
+  text-align: center;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+
+.disconnect-icon {
+  font-size: 48px;
+}
+
+.disconnect-text {
+  font-size: 12px;
+  color: var(--poke-red);
+  letter-spacing: 2px;
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.5);
+}
+
 /* ========== ANIMATIONS ========== */
 
-/*
-  TEACHING: CSS Keyframe Animations
-
-  These are all the animations in the game. By keeping them in CSS
-  rather than JavaScript, they run on the GPU (hardware-accelerated)
-  which means smoother animation and less battery drain on mobile.
-
-  JS only needs to add/remove a class to trigger them.
-*/
 @keyframes slideInLeft {
   from { transform: translateX(-80px); opacity: 0; }
   to { transform: translateX(0); opacity: 1; }
@@ -668,13 +774,6 @@ body {
 
 /* ========== RESPONSIVE ========== */
 
-/*
-  TEACHING: Mobile-First Responsive Design
-
-  The game is designed for small screens first (the default styles).
-  The @media query below only kicks in for LARGER screens.
-  This way mobile gets the simplest, fastest CSS.
-*/
 @media (max-width: 360px) {
   .choice-buttons {
     gap: 8px;
@@ -695,6 +794,11 @@ body {
 
   .player-turn-label {
     font-size: 16px;
+  }
+
+  .room-code {
+    font-size: 28px;
+    letter-spacing: 8px;
   }
 }
 
