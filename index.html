@@ -28,12 +28,30 @@
       </div>
     </section>
 
+    <!-- ========== NAME ENTRY SCREEN ========== -->
+    <section id="screen-name">
+      <div class="name-content">
+        <p class="name-icon">👤</p>
+        <h2 class="name-title">ENTER YOUR NAME</h2>
+        <input id="input-name" class="name-input" type="text" maxlength="12"
+               placeholder="YOUR NAME" autocomplete="off" autocapitalize="characters">
+        <button id="btn-enter-name" class="btn-retro">ENTER BATTLE</button>
+      </div>
+    </section>
+
     <!-- ========== LOBBY SCREEN ========== -->
     <section id="screen-lobby">
       <div class="lobby-content">
         <h2 class="lobby-title">LOBBY</h2>
+        <p class="lobby-welcome" id="lobby-welcome">Welcome, PLAYER!</p>
+
+        <button id="btn-random" class="btn-retro btn-random">RANDOM MATCH</button>
+
+        <div class="lobby-divider">— OR PLAY A FRIEND —</div>
+
         <button id="btn-create" class="btn-retro">CREATE ROOM</button>
-        <div class="lobby-divider">— OR —</div>
+
+        <div class="lobby-divider-small">— JOIN —</div>
         <div class="join-group">
           <input id="input-code" class="code-input" type="text" maxlength="4"
                  placeholder="CODE" autocomplete="off" autocapitalize="characters">
@@ -43,7 +61,7 @@
       </div>
     </section>
 
-    <!-- ========== WAITING SCREEN ========== -->
+    <!-- ========== WAITING SCREEN (private room) ========== -->
     <section id="screen-waiting">
       <div class="waiting-content">
         <p class="waiting-icon pulse">📡</p>
@@ -57,17 +75,27 @@
       </div>
     </section>
 
-    <!-- ========== CHOOSE SCREEN (both players see this simultaneously) ========== -->
+    <!-- ========== RANDOM WAITING SCREEN ========== -->
+    <section id="screen-random-waiting">
+      <div class="waiting-content">
+        <p class="waiting-icon pulse">🔍</p>
+        <p class="waiting-text">FINDING OPPONENT...</p>
+        <div class="random-dots pulse">. . .</div>
+        <button id="btn-cancel-random" class="btn-retro btn-small">CANCEL</button>
+      </div>
+    </section>
+
+    <!-- ========== CHOOSE SCREEN ========== -->
     <section id="screen-choose">
       <div class="choose-screen">
         <div class="score-bar">
           <div class="hp-group hp-p1">
-            <span class="hp-label" id="hp-label-p1">P1</span>
+            <span class="hp-label" id="hp-label-p1">YOU</span>
             <div class="hp-track"><div class="hp-fill hp-fill-p1"></div></div>
           </div>
           <div class="round-indicator">ROUND <span id="round-num">1</span></div>
           <div class="hp-group hp-p2">
-            <span class="hp-label" id="hp-label-p2">P2</span>
+            <span class="hp-label" id="hp-label-p2">OPP</span>
             <div class="hp-track"><div class="hp-fill hp-fill-p2"></div></div>
           </div>
         </div>
@@ -78,7 +106,7 @@
         <div class="timer-track">
           <div class="timer-fill" id="timer-fill"></div>
         </div>
-        <div class="timer-text" id="timer-text">5</div>
+        <div class="timer-text" id="timer-text">15</div>
 
         <div class="choice-buttons">
           <button class="btn-choice" data-choice="rock">
@@ -122,12 +150,12 @@
       <div class="result-content">
         <div class="score-bar">
           <div class="hp-group hp-p1">
-            <span class="hp-label">P1</span>
+            <span class="hp-label" id="result-label-p1">P1</span>
             <div class="hp-track"><div class="hp-fill hp-fill-p1"></div></div>
           </div>
           <div class="round-indicator" id="result-round">ROUND 1</div>
           <div class="hp-group hp-p2">
-            <span class="hp-label">P2</span>
+            <span class="hp-label" id="result-label-p2">P2</span>
             <div class="hp-track"><div class="hp-fill hp-fill-p2"></div></div>
           </div>
         </div>
@@ -136,10 +164,12 @@
         <div class="result-detail" id="result-detail"></div>
 
         <div class="result-score">
-          <span class="p1-color">P1: <span id="score-p1">0</span></span>
+          <span class="p1-color"><span id="result-name-p1">P1</span>: <span id="score-p1">0</span></span>
           <span> — </span>
-          <span class="p2-color">P2: <span id="score-p2">0</span></span>
+          <span class="p2-color"><span id="result-name-p2">P2</span>: <span id="score-p2">0</span></span>
         </div>
+
+        <button id="btn-next-round" class="btn-retro">NEXT ROUND</button>
       </div>
     </section>
 
@@ -147,7 +177,7 @@
     <section id="screen-gameover">
       <div class="gameover-content">
         <div class="gameover-icon" id="gameover-icon">🏆</div>
-        <div class="gameover-title" id="gameover-title">PLAYER 1 WINS!</div>
+        <div class="gameover-title" id="gameover-title">YOU WIN!</div>
         <div class="gameover-score" id="gameover-score">2 — 0</div>
         <div class="gameover-buttons">
           <button id="btn-rematch" class="btn-retro pulse">REMATCH</button>

@@ -23,7 +23,7 @@ const { WebSocketServer } = require('ws');
 const PORT = process.env.PORT || 3000;
 
 // ============================================================
-// STATIC FILE SERVER (same as before)
+// STATIC FILE SERVER
 // ============================================================
 
 const MIME_TYPES = {
@@ -67,72 +67,71 @@ const httpServer = http.createServer((req, res) => {
 // WEBSOCKET SERVER
 // ============================================================
 
-/*
-  TEACHING: WebSocket Server Setup
-
-  We pass the HTTP server to WebSocketServer so they share the same port.
-  When a browser connects via WebSocket (ws:// or wss://), it starts as
-  a normal HTTP request with an "Upgrade" header, then switches protocols.
-  This is why one port can serve both HTTP files AND WebSocket connections.
-*/
 const wss = new WebSocketServer({ server: httpServer });
 
 // ============================================================
-// ROOM MANAGEMENT
+// ROOM & MATCHMAKING
 // ============================================================
 
 /*
-  TEACHING: Room-Based Multiplayer
+  TEACHING: Room-Based Multiplayer + Random Matchmaking
 
-  Each "room" is a game session between two players. We use a Map
-  (like a dictionary) to store rooms by their 4-letter code.
+  Two ways to play:
+  1. PRIVATE ROOM: Create a room, share the 4-letter code with a friend
+  2. RANDOM MATCH: Join a queue — server pairs you with the next person
 
-  Room lifecycle:
-  1. Player 1 creates a room → gets a code like "ABCD"
-  2. Player 1 shares the code with their friend
-  3. Player 2 joins room "ABCD" → game starts
-  4. After the match, both can rematch or leave
-  5. When both leave, the room is deleted
-
-  Why server-side game logic?
-  If we let the client decide who wins, a player could hack their
-  JavaScript to always report "I won!" The server is the authority.
+  The random match queue is just an array. When someone joins:
+  - If the queue is empty → add them, they wait
+  - If someone is already waiting → pair them, create a room, start!
 */
 const rooms = new Map();
+let randomQueue = []; // Array of { ws, name } waiting for a random match
 
 const CHOICES = ['rock', 'paper', 'scissors'];
 const WIN_MAP = { rock: 'scissors', scissors: 'paper', paper: 'rock' };
-const CHOOSE_TIME = 5;
+const CHOOSE_TIME = 15; // 15 seconds to choose (was 5 — too short!)
 const CONTINUE_TIME = 10;
 
 function generateRoomCode() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // No I/O/0/1 to avoid confusion
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let code;
   do {
     code = '';
     for (let i = 0; i < 4; i++) {
       code += chars[Math.floor(Math.random() * chars.length)];
     }
-  } while (rooms.has(code)); // Ensure unique
+  } while (rooms.has(code));
   return code;
 }
 
-function createRoom() {
+function createRoom(p1Name, p2Name) {
   const code = generateRoomCode();
   rooms.set(code, {
-    players: [null, null],       // WebSocket references
-    names: ['P1', 'P2'],
+    players: [null, null],
+    names: [p1Name || 'P1', p2Name || 'P2'],
     p1Score: 0,
     p2Score: 0,
     currentRound: 1,
-    maxRounds: 3,
     winsNeeded: 2,
     continued: false,
-    choices: [null, null],       // [p1Choice, p2Choice]
+    choices: [null, null],
     chooseTimer: null,
     continueTimer: null,
     rematchVotes: [false, false],
-    state: 'waiting',            // waiting, choosing, battle, result, gameover
+    /*
+      TEACHING: Ready Signals
+
+      The old version used setTimeout to auto-advance between rounds.
+      Problem: the server's timer didn't match the client's animation time,
+      so the game would "play itself" — starting new rounds before players
+      could even see the results.
+
+      Fix: the server waits for BOTH players to send a "ready" signal
+      after they've finished watching the battle/result animation.
+      No more guessing how long the animation takes!
+    */
+    readyForNext: [false, false],
+    state: 'waiting',
   });
   return code;
 }
@@ -143,20 +142,8 @@ function resolveRound(p1Choice, p2Choice) {
   return 'p2';
 }
 
-function randomChoice() {
-  return CHOICES[Math.floor(Math.random() * CHOICES.length)];
-}
-
-/*
-  TEACHING: Sending Messages
-
-  We use JSON to communicate between server and client.
-  Every message has a "type" field so the client knows how to handle it.
-  This is a common pattern called "message protocol" or "action pattern"
-  (similar to Redux actions if you've used React).
-*/
 function send(ws, msg) {
-  if (ws && ws.readyState === 1) { // 1 = WebSocket.OPEN
+  if (ws && ws.readyState === 1) {
     ws.send(JSON.stringify(msg));
   }
 }
@@ -175,9 +162,10 @@ function getPlayerIndex(room, ws) {
 
 function startRound(room, code) {
   room.choices = [null, null];
+  room.readyForNext = [false, false];
   room.state = 'choosing';
 
-  // Tell each player to choose (they both see the choose screen simultaneously)
+  // Tell each player to choose — include opponent names so UI can display them
   room.players.forEach((ws, i) => {
     send(ws, {
       type: 'choose',
@@ -186,32 +174,46 @@ function startRound(room, code) {
       p2Score: room.p2Score,
       winsNeeded: room.winsNeeded,
       timeLimit: CHOOSE_TIME,
+      p1Name: room.names[0],
+      p2Name: room.names[1],
     });
   });
 
-  // Start server-side timer — if time runs out, pick random for those who didn't choose
+  // Timer: if time runs out, anyone who didn't choose FORFEITS (not random pick)
   room.chooseTimer = setTimeout(() => {
-    if (room.choices[0] === null) room.choices[0] = randomChoice();
-    if (room.choices[1] === null) room.choices[1] = randomChoice();
+    const p1Chose = room.choices[0] !== null;
+    const p2Chose = room.choices[1] !== null;
+
+    if (!p1Chose && !p2Chose) {
+      // Both AFK — it's a draw, nobody scores
+      room.choices[0] = 'rock';
+      room.choices[1] = 'rock';
+    } else if (!p1Chose) {
+      // P1 didn't choose — give P2 a free win
+      room.choices[0] = 'rock';
+      room.choices[1] = 'paper';
+    } else if (!p2Chose) {
+      // P2 didn't choose — give P1 a free win
+      room.choices[0] = 'paper';
+      room.choices[1] = 'rock';
+    }
+
     resolveBattle(room, code);
-  }, (CHOOSE_TIME + 1) * 1000); // +1s grace for network latency
+  }, (CHOOSE_TIME + 1) * 1000);
 }
 
 function handleChoice(room, code, playerIndex, choice) {
   if (room.state !== 'choosing') return;
   if (!CHOICES.includes(choice)) return;
-  if (room.choices[playerIndex] !== null) return; // Already chose
+  if (room.choices[playerIndex] !== null) return;
 
   room.choices[playerIndex] = choice;
 
-  // Confirm to the player that their choice was received
   send(room.players[playerIndex], { type: 'choice-confirmed', choice });
 
-  // Tell opponent that the other player has locked in (but not WHAT they chose)
   const opponentIndex = playerIndex === 0 ? 1 : 0;
   send(room.players[opponentIndex], { type: 'opponent-ready' });
 
-  // If both have chosen, resolve immediately
   if (room.choices[0] !== null && room.choices[1] !== null) {
     clearTimeout(room.chooseTimer);
     resolveBattle(room, code);
@@ -228,7 +230,13 @@ function resolveBattle(room, code) {
   if (result === 'p1') room.p1Score++;
   else if (result === 'p2') room.p2Score++;
 
-  // Send battle result to both players
+  if (result !== 'draw') {
+    room.currentRound++;
+  }
+
+  const matchWinner = checkMatchEnd(room);
+
+  // Send battle result — client will animate, then send 'ready-for-next'
   broadcast(room, {
     type: 'battle-result',
     p1Choice,
@@ -236,22 +244,24 @@ function resolveBattle(room, code) {
     result,
     p1Score: room.p1Score,
     p2Score: room.p2Score,
-    round: room.currentRound,
+    round: room.currentRound - (result !== 'draw' ? 1 : 0),
     winsNeeded: room.winsNeeded,
+    matchOver: !!matchWinner,
+    matchWinner,
+    p1Name: room.names[0],
+    p2Name: room.names[1],
   });
 
-  if (result !== 'draw') {
-    room.currentRound++;
-  }
+  // Server does NOT auto-advance — it waits for 'ready-for-next' from both clients
+}
 
-  // Check if match is over
-  const matchWinner = checkMatchEnd(room);
+function handleReadyForNext(room, code, playerIndex) {
+  room.readyForNext[playerIndex] = true;
 
-  if (matchWinner) {
-    room.state = 'gameover';
+  if (room.readyForNext[0] && room.readyForNext[1]) {
+    const matchWinner = checkMatchEnd(room);
 
-    // Delay gameover message to let battle animation play
-    setTimeout(() => {
+    if (matchWinner) {
       if (!room.continued) {
         // Offer continue
         broadcast(room, {
@@ -260,6 +270,8 @@ function resolveBattle(room, code) {
           p1Score: room.p1Score,
           p2Score: room.p2Score,
           timeLimit: CONTINUE_TIME,
+          p1Name: room.names[0],
+          p2Name: room.names[1],
         });
         room.state = 'continue';
 
@@ -269,6 +281,8 @@ function resolveBattle(room, code) {
             winner: matchWinner,
             p1Score: room.p1Score,
             p2Score: room.p2Score,
+            p1Name: room.names[0],
+            p2Name: room.names[1],
           });
           room.state = 'gameover';
           room.rematchVotes = [false, false];
@@ -279,17 +293,16 @@ function resolveBattle(room, code) {
           winner: matchWinner,
           p1Score: room.p1Score,
           p2Score: room.p2Score,
+          p1Name: room.names[0],
+          p2Name: room.names[1],
         });
+        room.state = 'gameover';
         room.rematchVotes = [false, false];
       }
-    }, 4000); // Wait for battle animation
-  } else {
-    // Next round after battle animation
-    setTimeout(() => {
-      if (room.state === 'battle') {
-        startRound(room, code);
-      }
-    }, 4000);
+    } else {
+      // Next round
+      startRound(room, code);
+    }
   }
 }
 
@@ -304,7 +317,6 @@ function handleContinue(room, code) {
 
   clearTimeout(room.continueTimer);
   room.continued = true;
-  room.maxRounds = 7;
   room.winsNeeded = 4;
   room.state = 'choosing';
 
@@ -315,7 +327,6 @@ function handleContinue(room, code) {
     p2Score: room.p2Score,
   });
 
-  // Small delay then start next round
   setTimeout(() => startRound(room, code), 500);
 }
 
@@ -324,16 +335,13 @@ function handleRematch(room, code, playerIndex) {
 
   room.rematchVotes[playerIndex] = true;
 
-  // Tell the OTHER player that this player wants a rematch
   const opponentIndex = playerIndex === 0 ? 1 : 0;
   send(room.players[opponentIndex], { type: 'opponent-wants-rematch' });
 
   if (room.rematchVotes[0] && room.rematchVotes[1]) {
-    // Both want rematch — reset and start
     room.p1Score = 0;
     room.p2Score = 0;
     room.currentRound = 1;
-    room.maxRounds = 3;
     room.winsNeeded = 2;
     room.continued = false;
     room.rematchVotes = [false, false];
@@ -345,14 +353,11 @@ function handleRematch(room, code, playerIndex) {
 }
 
 function handleReturnToLobby(room, code, playerIndex) {
-  // Notify the other player
   const opponentIndex = playerIndex === 0 ? 1 : 0;
   send(room.players[opponentIndex], { type: 'opponent-left' });
 
-  // Disconnect this player from the room
   room.players[playerIndex] = null;
 
-  // Clean up room if empty
   if (!room.players[0] && !room.players[1]) {
     clearTimeout(room.chooseTimer);
     clearTimeout(room.continueTimer);
@@ -360,31 +365,57 @@ function handleReturnToLobby(room, code, playerIndex) {
   }
 }
 
+function removeFromRandomQueue(ws) {
+  randomQueue = randomQueue.filter(entry => entry.ws !== ws);
+}
+
 // ============================================================
 // CONNECTION HANDLER
 // ============================================================
 
+/*
+  TEACHING: Per-Connection State
+
+  We store room/code/name directly on the WebSocket object (ws._room, etc.)
+  instead of using closure variables. This is critical for random matchmaking:
+  when Player A is matched, the SERVER assigns them to a room, but Player A's
+  message handler needs to know about it. If we used closure variables, only
+  the player who triggered the match would have them set — the other player's
+  closure would still be null.
+
+  By storing state ON the ws object, any code that has the ws reference
+  can read/write the room assignment — no closure scoping issues.
+*/
 wss.on('connection', (ws) => {
-  let currentRoom = null;
-  let currentCode = null;
+  ws._room = null;
+  ws._code = null;
+  ws._name = 'ANON';
 
   ws.on('message', (raw) => {
     let msg;
     try {
       msg = JSON.parse(raw);
     } catch {
-      return; // Ignore malformed messages
+      return;
     }
 
     switch (msg.type) {
+
+      // ---- SET NAME ----
+
+      case 'set-name': {
+        ws._name = (msg.name || '').trim().substring(0, 12).toUpperCase() || 'ANON';
+        break;
+      }
+
       // ---- LOBBY ----
 
       case 'create-room': {
-        const code = createRoom();
+        const code = createRoom(ws._name);
         const room = rooms.get(code);
         room.players[0] = ws;
-        currentRoom = room;
-        currentCode = code;
+        ws._room = room;
+        ws._code = code;
 
         send(ws, { type: 'room-created', code, playerNum: 1 });
         break;
@@ -405,82 +436,140 @@ wss.on('connection', (ws) => {
         }
 
         room.players[1] = ws;
-        currentRoom = room;
-        currentCode = code;
+        room.names[1] = ws._name;
+        ws._room = room;
+        ws._code = code;
 
         send(ws, { type: 'room-joined', code, playerNum: 2 });
+        send(room.players[0], { type: 'opponent-joined', opponentName: ws._name });
 
-        // Notify P1 that opponent joined
-        send(room.players[0], { type: 'opponent-joined' });
-
-        // Start the game after a brief countdown
-        broadcast(room, { type: 'game-starting' });
+        broadcast(room, {
+          type: 'game-starting',
+          p1Name: room.names[0],
+          p2Name: room.names[1],
+        });
         setTimeout(() => startRound(room, code), 2000);
+        break;
+      }
+
+      /*
+        TEACHING: Random Matchmaking Queue
+
+        This is how most online games work behind the scenes:
+        1. Player clicks "Find Match"
+        2. Server adds them to a queue (just an array)
+        3. When 2+ players are waiting, pair them up and start a game
+        4. If someone cancels, remove them from the queue
+
+        For a bigger game you'd add skill-based matching (ELO ratings),
+        region-based matching (latency), etc. But the core is always a queue.
+      */
+      case 'random-match': {
+        removeFromRandomQueue(ws);
+
+        if (randomQueue.length > 0) {
+          const opponent = randomQueue.shift();
+
+          if (opponent.ws.readyState !== 1) {
+            randomQueue.push({ ws, name: ws._name });
+            send(ws, { type: 'random-waiting' });
+            break;
+          }
+
+          const code = createRoom(opponent.ws._name, ws._name);
+          const room = rooms.get(code);
+          room.players[0] = opponent.ws;
+          room.players[1] = ws;
+
+          // Both players get room references — this is why we use ws._room
+          opponent.ws._room = room;
+          opponent.ws._code = code;
+          ws._room = room;
+          ws._code = code;
+
+          send(opponent.ws, { type: 'random-matched', code, playerNum: 1, opponentName: ws._name });
+          send(ws, { type: 'random-matched', code, playerNum: 2, opponentName: opponent.ws._name });
+
+          broadcast(room, {
+            type: 'game-starting',
+            p1Name: room.names[0],
+            p2Name: room.names[1],
+          });
+          setTimeout(() => startRound(room, code), 2000);
+        } else {
+          randomQueue.push({ ws, name: ws._name });
+          send(ws, { type: 'random-waiting' });
+        }
+        break;
+      }
+
+      case 'cancel-random': {
+        removeFromRandomQueue(ws);
+        send(ws, { type: 'random-cancelled' });
         break;
       }
 
       // ---- GAMEPLAY ----
 
       case 'choice': {
-        if (!currentRoom) return;
-        const idx = getPlayerIndex(currentRoom, ws);
+        if (!ws._room) return;
+        const idx = getPlayerIndex(ws._room, ws);
         if (idx === -1) return;
-        handleChoice(currentRoom, currentCode, idx, msg.choice);
+        handleChoice(ws._room, ws._code, idx, msg.choice);
+        break;
+      }
+
+      case 'ready-for-next': {
+        if (!ws._room) return;
+        const idx = getPlayerIndex(ws._room, ws);
+        if (idx === -1) return;
+        handleReadyForNext(ws._room, ws._code, idx);
         break;
       }
 
       case 'continue': {
-        if (!currentRoom) return;
-        handleContinue(currentRoom, currentCode);
+        if (!ws._room) return;
+        handleContinue(ws._room, ws._code);
         break;
       }
 
       case 'rematch': {
-        if (!currentRoom) return;
-        const idx = getPlayerIndex(currentRoom, ws);
+        if (!ws._room) return;
+        const idx = getPlayerIndex(ws._room, ws);
         if (idx === -1) return;
-        handleRematch(currentRoom, currentCode, idx);
+        handleRematch(ws._room, ws._code, idx);
         break;
       }
 
       case 'return-to-lobby': {
-        if (!currentRoom) return;
-        const idx = getPlayerIndex(currentRoom, ws);
+        if (!ws._room) return;
+        const idx = getPlayerIndex(ws._room, ws);
         if (idx === -1) return;
-        handleReturnToLobby(currentRoom, currentCode, idx);
-        currentRoom = null;
-        currentCode = null;
+        handleReturnToLobby(ws._room, ws._code, idx);
+        ws._room = null;
+        ws._code = null;
         break;
       }
     }
   });
 
-  /*
-    TEACHING: Handling Disconnects
-
-    When a player closes their browser or loses internet, the WebSocket
-    fires a 'close' event. We need to:
-    1. Notify the other player
-    2. Clean up the room if it's empty
-
-    Without this, "ghost rooms" would pile up and waste memory.
-  */
   ws.on('close', () => {
-    if (!currentRoom) return;
-    const idx = getPlayerIndex(currentRoom, ws);
+    removeFromRandomQueue(ws);
+
+    if (!ws._room) return;
+    const idx = getPlayerIndex(ws._room, ws);
     if (idx === -1) return;
 
-    clearTimeout(currentRoom.chooseTimer);
-    clearTimeout(currentRoom.continueTimer);
+    clearTimeout(ws._room.chooseTimer);
+    clearTimeout(ws._room.continueTimer);
 
     const opponentIndex = idx === 0 ? 1 : 0;
-    send(currentRoom.players[opponentIndex], { type: 'opponent-disconnected' });
+    send(ws._room.players[opponentIndex], { type: 'opponent-disconnected' });
 
-    currentRoom.players[idx] = null;
+    ws._room.players[idx] = null;
 
-    // Clean up empty rooms
-    if (!currentRoom.players[0] && !currentRoom.players[1]) {
-      rooms.delete(currentCode);
+    if (!ws._room.players[0] && !ws._room.players[1]) {
+      rooms.delete(ws._code);
     }
   });
 });

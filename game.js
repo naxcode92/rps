@@ -4,27 +4,21 @@
 
   TEACHING: Client-Server Architecture
 
-  The old version ran everything locally (pass-the-phone).
-  Now, game logic lives on the SERVER and this client just:
-  1. Sends player actions (choices, rematch votes) to the server
+  Game logic lives on the SERVER. This client:
+  1. Sends player actions (name, choices, rematch votes) to the server
   2. Receives game events (battle results, opponent status) from the server
   3. Updates the UI based on those events
+  4. Sends "ready-for-next" when done animating so the server can advance
 
   The client NEVER decides who wins — the server is the authority.
-  This prevents cheating and ensures both players see the same result.
 */
 
 // ============================================================
 // CONSTANTS
 // ============================================================
 
-const CHOICE_EMOJI = {
-  rock: '✊',
-  paper: '✋',
-  scissors: '✌️'
-};
-
-const CHOOSE_TIME = 5;
+const CHOICE_EMOJI = { rock: '✊', paper: '✋', scissors: '✌️' };
+const CHOOSE_TIME = 15;
 
 // ============================================================
 // UTILITY FUNCTIONS
@@ -53,20 +47,10 @@ function typeText(element, text, speed = 35) {
 // WEBSOCKET CONNECTION
 // ============================================================
 
-/*
-  TEACHING: WebSocket URL Construction
-
-  We need to connect to the same server that served this page.
-  - window.location.host gives us "example.com:8080" (or just "example.com")
-  - If the page was loaded over HTTPS, we use WSS (WebSocket Secure)
-  - If over HTTP (local dev), we use plain WS
-
-  This means the code works in BOTH local development AND production
-  without changing any configuration.
-*/
-
 let ws = null;
-let myPlayerNum = null;  // 1 or 2
+let myPlayerNum = null;   // 1 or 2
+let myName = 'ANON';
+let opponentName = 'OPP';
 let currentRoomCode = null;
 let chooseTimerId = null;
 let continueTimerId = null;
@@ -77,6 +61,10 @@ function connectWebSocket() {
 
   ws.onopen = () => {
     console.log('Connected to server');
+    // Re-send name if we already have one (reconnection case)
+    if (myName && myName !== 'ANON') {
+      sendMsg({ type: 'set-name', name: myName });
+    }
   };
 
   ws.onmessage = (event) => {
@@ -86,9 +74,8 @@ function connectWebSocket() {
 
   ws.onclose = () => {
     console.log('Disconnected from server');
-    // If we're in a game, show disconnect overlay
     const state = document.getElementById('game-frame').dataset.state;
-    if (state !== 'title' && state !== 'lobby') {
+    if (!['title', 'lobby', 'name'].includes(state)) {
       showDisconnect('CONNECTION LOST');
     }
   };
@@ -122,18 +109,19 @@ function clearContinueTimer() {
   }
 }
 
+function goToLobby() {
+  currentRoomCode = null;
+  myPlayerNum = null;
+  opponentName = 'OPP';
+  document.getElementById('btn-rematch').disabled = false;
+  document.getElementById('lobby-error').textContent = '';
+  document.getElementById('input-code').value = '';
+  setState('lobby');
+}
+
 // ============================================================
 // SERVER MESSAGE HANDLER
 // ============================================================
-
-/*
-  TEACHING: Message-Driven Architecture
-
-  Instead of the client controlling game flow, the SERVER tells us
-  what's happening and we react. Each message type maps to a UI update.
-  This is similar to how multiplayer games like Among Us or Fortnite work —
-  your client is just a "view" of the server's game state.
-*/
 
 function handleServerMessage(msg) {
   switch (msg.type) {
@@ -154,11 +142,27 @@ function handleServerMessage(msg) {
       break;
 
     case 'opponent-joined':
-      // P1 sees this when P2 joins their room
+      opponentName = msg.opponentName || 'OPP';
+      break;
+
+    case 'random-waiting':
+      setState('random-waiting');
+      break;
+
+    case 'random-cancelled':
+      goToLobby();
+      break;
+
+    case 'random-matched':
+      myPlayerNum = msg.playerNum;
+      currentRoomCode = msg.code;
+      opponentName = msg.opponentName || 'OPP';
       break;
 
     case 'game-starting':
-      setState('choose'); // Brief moment before choose arrives
+      if (msg.p1Name && msg.p2Name) {
+        opponentName = myPlayerNum === 1 ? msg.p2Name : msg.p1Name;
+      }
       break;
 
     case 'choose':
@@ -183,7 +187,6 @@ function handleServerMessage(msg) {
 
     case 'continued':
       clearContinueTimer();
-      // Game will restart shortly via 'choose' message
       break;
 
     case 'gameover':
@@ -191,12 +194,11 @@ function handleServerMessage(msg) {
       break;
 
     case 'opponent-wants-rematch':
-      document.getElementById('rematch-status').textContent = 'OPPONENT WANTS REMATCH!';
+      document.getElementById('rematch-status').textContent = opponentName + ' WANTS REMATCH!';
       break;
 
     case 'rematch-start':
       document.getElementById('rematch-status').textContent = '';
-      // Will receive 'choose' message shortly
       break;
 
     case 'opponent-left':
@@ -217,19 +219,24 @@ function enterChoose(msg) {
   setState('choose');
   clearChooseTimer();
 
-  // Update score display
+  // Re-enable next round button for future use
+  document.getElementById('btn-next-round').disabled = false;
+
+  const myNameDisplay = myPlayerNum === 1 ? msg.p1Name : msg.p2Name;
+  const oppNameDisplay = myPlayerNum === 1 ? msg.p2Name : msg.p1Name;
+  opponentName = oppNameDisplay;
+
   updateHP(msg.p1Score, msg.p2Score, msg.winsNeeded);
   document.getElementById('round-num').textContent = msg.round;
 
-  // Update labels to show which player YOU are
-  const youLabel = myPlayerNum === 1 ? 'YOU' : 'YOU';
-  const oppLabel = myPlayerNum === 1 ? 'OPP' : 'OPP';
-  document.getElementById('hp-label-p1').textContent = myPlayerNum === 1 ? 'YOU' : 'OPP';
-  document.getElementById('hp-label-p2').textContent = myPlayerNum === 2 ? 'YOU' : 'OPP';
+  // Show names in HP bar
+  document.getElementById('hp-label-p1').textContent = myPlayerNum === 1 ? 'YOU' : oppNameDisplay;
+  document.getElementById('hp-label-p2').textContent = myPlayerNum === 2 ? 'YOU' : oppNameDisplay;
 
   document.getElementById('choose-label').textContent = 'YOUR MOVE';
-  document.getElementById('choose-label').className = `player-turn-label ${myPlayerNum === 1 ? 'p1-color' : 'p2-color'}`;
-  document.getElementById('choose-sub').textContent = 'Choose your weapon!';
+  document.getElementById('choose-label').className =
+    `player-turn-label ${myPlayerNum === 1 ? 'p1-color' : 'p2-color'}`;
+  document.getElementById('choose-sub').textContent = `vs ${oppNameDisplay}`;
 
   // Re-enable buttons
   document.querySelectorAll('.btn-choice').forEach(btn => {
@@ -243,23 +250,20 @@ function enterChoose(msg) {
 
   timerText.textContent = CHOOSE_TIME;
   timerFill.classList.remove('running');
-  void timerFill.offsetWidth; // Force reflow
+  void timerFill.offsetWidth; // Force reflow to restart animation
   timerFill.classList.add('running');
 
   let countdown = CHOOSE_TIME;
   chooseTimerId = setInterval(() => {
     countdown--;
     timerText.textContent = Math.max(0, countdown);
-    if (countdown <= 0) {
-      clearChooseTimer();
-    }
+    if (countdown <= 0) clearChooseTimer();
   }, 1000);
 }
 
 function onChoiceConfirmed(choice) {
   clearChooseTimer();
 
-  // Visually lock in the choice
   document.querySelectorAll('.btn-choice').forEach(btn => {
     btn.disabled = true;
     if (btn.dataset.choice === choice) {
@@ -269,15 +273,14 @@ function onChoiceConfirmed(choice) {
     }
   });
 
-  document.getElementById('choose-sub').textContent = 'Waiting for opponent...';
+  document.getElementById('choose-sub').textContent = `Waiting for ${opponentName}...`;
 }
 
 function onOpponentReady() {
-  // Could add a visual indicator that opponent has chosen
-  document.getElementById('choose-sub').textContent =
-    document.getElementById('choose-sub').textContent === 'Waiting for opponent...'
-      ? 'Waiting for opponent...'
-      : 'Opponent is ready!';
+  const sub = document.getElementById('choose-sub');
+  if (!sub.textContent.startsWith('Waiting')) {
+    sub.textContent = `${opponentName} is ready!`;
+  }
 }
 
 // ============================================================
@@ -292,35 +295,36 @@ async function enterBattle(msg) {
   const spriteP1 = document.getElementById('sprite-p1');
   const spriteP2 = document.getElementById('sprite-p2');
 
-  // Update labels
-  document.getElementById('battle-label-p1').textContent = myPlayerNum === 1 ? 'YOU' : 'OPP';
-  document.getElementById('battle-label-p2').textContent = myPlayerNum === 2 ? 'YOU' : 'OPP';
+  // Show names above sprites
+  const p1Name = msg.p1Name || 'P1';
+  const p2Name = msg.p2Name || 'P2';
+  document.getElementById('battle-label-p1').textContent =
+    myPlayerNum === 1 ? 'YOU' : p1Name;
+  document.getElementById('battle-label-p2').textContent =
+    myPlayerNum === 2 ? 'YOU' : p2Name;
 
   spriteP1.textContent = '?';
   spriteP2.textContent = '?';
   battleText.textContent = '';
 
-  // Reveal P1's choice
   await delay(500);
   spriteP1.textContent = CHOICE_EMOJI[msg.p1Choice];
-  await typeText(battleText, `P1 used ${msg.p1Choice.toUpperCase()}!`);
+  await typeText(battleText, `${p1Name} used ${msg.p1Choice.toUpperCase()}!`);
 
-  // Reveal P2's choice
   await delay(600);
   spriteP2.textContent = CHOICE_EMOJI[msg.p2Choice];
-  await typeText(battleText, `P2 used ${msg.p2Choice.toUpperCase()}!`);
+  await typeText(battleText, `${p2Name} used ${msg.p2Choice.toUpperCase()}!`);
 
-  // Show result
   await delay(500);
 
   if (msg.result === 'draw') {
     await typeText(battleText, "It's a DRAW! Going again...");
   } else if (msg.result === 'p1') {
     spriteP2.parentElement.classList.add('shake');
-    await typeText(battleText, "It's super effective! P1 wins!");
+    await typeText(battleText, `It's super effective! ${p1Name} wins!`);
   } else {
     spriteP1.parentElement.classList.add('shake');
-    await typeText(battleText, "It's super effective! P2 wins!");
+    await typeText(battleText, `It's super effective! ${p2Name} wins!`);
   }
 
   await delay(1200);
@@ -328,11 +332,16 @@ async function enterBattle(msg) {
   spriteP1.parentElement.classList.remove('shake');
   spriteP2.parentElement.classList.remove('shake');
 
-  // Show result screen (only for non-draws — draws auto-restart via server)
-  if (msg.result !== 'draw') {
+  if (msg.matchOver) {
+    // Match is over — tell server we're ready for gameover/continue screen
+    sendMsg({ type: 'ready-for-next' });
+  } else if (msg.result === 'draw') {
+    // Draw — tell server we're ready for next round immediately
+    sendMsg({ type: 'ready-for-next' });
+  } else {
+    // Round won/lost — show result screen with "NEXT ROUND" button
     showResult(msg);
   }
-  // For draws, the server will send a new 'choose' message automatically
 }
 
 function showResult(msg) {
@@ -341,9 +350,15 @@ function showResult(msg) {
   const resultText = document.getElementById('result-text');
   const resultDetail = document.getElementById('result-detail');
   const resultRound = document.getElementById('result-round');
+  const p1Name = msg.p1Name || 'P1';
+  const p2Name = msg.p2Name || 'P2';
 
   document.getElementById('score-p1').textContent = msg.p1Score;
   document.getElementById('score-p2').textContent = msg.p2Score;
+  document.getElementById('result-name-p1').textContent = myPlayerNum === 1 ? 'YOU' : p1Name;
+  document.getElementById('result-name-p2').textContent = myPlayerNum === 2 ? 'YOU' : p2Name;
+  document.getElementById('result-label-p1').textContent = myPlayerNum === 1 ? 'YOU' : p1Name;
+  document.getElementById('result-label-p2').textContent = myPlayerNum === 2 ? 'YOU' : p2Name;
   updateHP(msg.p1Score, msg.p2Score, msg.winsNeeded);
 
   resultRound.textContent = `ROUND ${msg.round}`;
@@ -357,8 +372,6 @@ function showResult(msg) {
     resultText.className = 'result-outcome p2-color';
     resultDetail.textContent = `${msg.p2Choice.toUpperCase()} beats ${msg.p1Choice.toUpperCase()}`;
   }
-
-  // Result screen auto-advances (server will send next 'choose' or 'gameover')
 }
 
 // ============================================================
@@ -375,7 +388,7 @@ function enterContinue(msg) {
   if (loserNum === myPlayerNum) {
     loserText.textContent = "YOU'RE DOWN!";
   } else {
-    loserText.textContent = 'OPPONENT IS DOWN!';
+    loserText.textContent = `${opponentName} IS DOWN!`;
   }
   loserText.className = `continue-loser ${loserNum === 1 ? 'p1-color' : 'p2-color'}`;
 
@@ -386,9 +399,7 @@ function enterContinue(msg) {
   continueTimerId = setInterval(() => {
     count--;
     countdown.textContent = Math.max(0, count);
-    if (count <= 0) {
-      clearContinueTimer();
-    }
+    if (count <= 0) clearContinueTimer();
   }, 1000);
 }
 
@@ -407,6 +418,7 @@ function enterGameover(msg) {
 
   screen.classList.remove('p1-wins', 'p2-wins');
   document.getElementById('rematch-status').textContent = '';
+  document.getElementById('btn-rematch').disabled = false;
 
   const iWon = (msg.winner === 'p1' && myPlayerNum === 1) ||
                (msg.winner === 'p2' && myPlayerNum === 2);
@@ -455,9 +467,40 @@ function updateHP(p1Score, p2Score, winsNeeded) {
 document.addEventListener('DOMContentLoaded', () => {
   connectWebSocket();
 
-  // Title → Lobby
+  // Title → Name Entry
   document.getElementById('btn-start').addEventListener('click', () => {
-    setState('lobby');
+    setState('name');
+    document.getElementById('input-name').focus();
+  });
+
+  // Name Entry → Lobby
+  document.getElementById('btn-enter-name').addEventListener('click', submitName);
+  document.getElementById('input-name').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submitName();
+  });
+
+  function submitName() {
+    const name = document.getElementById('input-name').value.trim().toUpperCase();
+    if (!name) {
+      document.getElementById('input-name').focus();
+      return;
+    }
+    myName = name.substring(0, 12);
+    sendMsg({ type: 'set-name', name: myName });
+    document.getElementById('lobby-welcome').textContent = `Welcome, ${myName}!`;
+    goToLobby();
+  }
+
+  // Lobby: Random Match
+  document.getElementById('btn-random').addEventListener('click', () => {
+    document.getElementById('lobby-error').textContent = '';
+    sendMsg({ type: 'random-match' });
+  });
+
+  // Random Waiting: Cancel
+  document.getElementById('btn-cancel-random').addEventListener('click', () => {
+    sendMsg({ type: 'cancel-random' });
+    goToLobby();
   });
 
   // Lobby: Create Room
@@ -477,22 +520,16 @@ document.addEventListener('DOMContentLoaded', () => {
     sendMsg({ type: 'join-room', code });
   });
 
-  // Allow Enter key in code input
   document.getElementById('input-code').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      document.getElementById('btn-join').click();
-    }
+    if (e.key === 'Enter') document.getElementById('btn-join').click();
   });
 
   // Waiting: Cancel
   document.getElementById('btn-cancel-wait').addEventListener('click', () => {
     sendMsg({ type: 'return-to-lobby' });
-    currentRoomCode = null;
-    myPlayerNum = null;
-    // Reconnect to get a fresh connection
     ws.close();
     connectWebSocket();
-    setState('lobby');
+    goToLobby();
   });
 
   // Choice buttons
@@ -500,6 +537,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const btn = e.target.closest('.btn-choice');
     if (!btn || btn.disabled) return;
     sendMsg({ type: 'choice', choice: btn.dataset.choice });
+  });
+
+  // Result: Next Round — player signals they've seen the result
+  document.getElementById('btn-next-round').addEventListener('click', () => {
+    sendMsg({ type: 'ready-for-next' });
+    // Show a brief "waiting" state
+    document.getElementById('result-text').textContent = 'WAITING...';
+    document.getElementById('btn-next-round').disabled = true;
   });
 
   // Continue
@@ -510,30 +555,24 @@ document.addEventListener('DOMContentLoaded', () => {
   // Game Over: Rematch
   document.getElementById('btn-rematch').addEventListener('click', () => {
     sendMsg({ type: 'rematch' });
-    document.getElementById('rematch-status').textContent = 'WAITING FOR OPPONENT...';
+    document.getElementById('rematch-status').textContent = 'WAITING FOR ' + opponentName + '...';
     document.getElementById('btn-rematch').disabled = true;
   });
 
   // Game Over: Back to Lobby
   document.getElementById('btn-lobby').addEventListener('click', () => {
     sendMsg({ type: 'return-to-lobby' });
-    currentRoomCode = null;
-    myPlayerNum = null;
-    document.getElementById('btn-rematch').disabled = false;
     ws.close();
     connectWebSocket();
-    setState('lobby');
+    goToLobby();
   });
 
   // Disconnect: Back to Lobby
   document.getElementById('btn-back-lobby').addEventListener('click', () => {
     hideDisconnect();
-    currentRoomCode = null;
-    myPlayerNum = null;
-    document.getElementById('btn-rematch').disabled = false;
     if (ws.readyState !== WebSocket.OPEN) {
       connectWebSocket();
     }
-    setState('lobby');
+    goToLobby();
   });
 });
