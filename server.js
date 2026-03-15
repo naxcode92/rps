@@ -41,8 +41,12 @@ const MIME_TYPES = {
 };
 
 const server = http.createServer((req, res) => {
+  // Strip query strings (e.g., "/style.css?v=1" → "/style.css")
+  // Railway health checks and browsers may add query params
+  const urlPath = req.url.split('?')[0];
+
   // Map "/" to "/index.html" — this is why you don't need to type "index.html" in URLs
-  let filePath = req.url === '/' ? '/index.html' : req.url;
+  let filePath = urlPath === '/' ? '/index.html' : urlPath;
 
   // Security: prevent directory traversal attacks (e.g., "/../../../etc/passwd")
   // path.normalize removes ".." segments, then we ensure the result stays within __dirname
@@ -72,6 +76,17 @@ const server = http.createServer((req, res) => {
   });
 });
 
-server.listen(PORT, () => {
+/*
+  TEACHING: Binding to 0.0.0.0
+
+  By default, some environments only listen on "localhost" (127.0.0.1),
+  which means ONLY the same machine can connect. Railway runs your app
+  inside a container and routes traffic through a reverse proxy — that
+  proxy is technically a "different machine," so it needs 0.0.0.0
+  (listen on ALL network interfaces) to reach your server.
+
+  This is the #1 cause of 502 errors on Railway, Render, Fly, etc.
+*/
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`Rock Paper Scissors server running on port ${PORT}`);
 });
