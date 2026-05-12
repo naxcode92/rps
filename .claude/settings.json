@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c '\n# --- Mini Shai-Hulud IOC Scanner ---\n# This hook runs AFTER every bash command Claude Code executes.\n# It checks if an npm/pip install just happened, and if so, scans for known\n# indicators of compromise (IOCs) from the Shai-Hulud worm.\n\n# Only trigger after install commands\nTOOL_INPUT=\"$CLAUDE_TOOL_INPUT\"\nif echo \"$TOOL_INPUT\" | grep -qiE \"npm install|npm i |npm ci|pip install|yarn add|pnpm add|bun add\"; then\n\n  FOUND=0\n\n  # Check 1: Suspicious files in config directories\n  for f in .claude/setup.mjs .claude/router_runtime.js .vscode/setup.mjs; do\n    if [ -f \"$f\" ]; then\n      echo \"[ALERT] Suspicious file found: $f — possible Shai-Hulud persistence hook\"\n      FOUND=1\n    fi\n  done\n\n  # Check 2: Known malicious filenames in node_modules\n  if [ -d \"node_modules\" ]; then\n    HITS=$(find node_modules -maxdepth 3 \\( -name \"router_init.js\" -o -name \"tanstack_runner.js\" -o -name \"router_runtime.js\" \\) 2>/dev/null)\n    if [ -n \"$HITS\" ]; then\n      echo \"[ALERT] Known IOC files in node_modules:\"\n      echo \"$HITS\"\n      FOUND=1\n    fi\n  fi\n\n  # Check 3: Suspicious domains in recently installed packages\n  if [ -d \"node_modules\" ]; then\n    DOMAIN_HITS=$(grep -rl \"getsession\\.org\\|git-tanstack\\.com\\|cloud-aws\\.adc-e\\.uk\" node_modules/ --include=\"*.js\" --include=\"*.json\" 2>/dev/null | head -10)\n    if [ -n \"$DOMAIN_HITS\" ]; then\n      echo \"[ALERT] Suspicious C2 domains found in:\"\n      echo \"$DOMAIN_HITS\"\n      FOUND=1\n    fi\n  fi\n\n  # Check 4: Git commit hash IOC in package.json files\n  if grep -r \"79ac49eedf774dd4b0cfa308722bc463cfe5885c\" package.json node_modules/*/package.json 2>/dev/null; then\n    echo \"[ALERT] Known malicious git commit hash found in dependencies\"\n    FOUND=1\n  fi\n\n  if [ \"$FOUND\" -eq 0 ]; then\n    echo \"[OK] Post-install IOC scan clean\"\n  else\n    echo \"\"\n    echo \"========================================\"\n    echo \"  SUPPLY CHAIN COMPROMISE DETECTED\"  \n    echo \"  Do NOT proceed. Alert Niranjan.\"  \n    echo \"========================================\"\n  fi\nfi\n'"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c '\n# --- Pre-install safety check ---\n# Warns before running npm install (as opposed to npm ci)\n# in what looks like a CI/production context.\n\nTOOL_INPUT=\"$CLAUDE_TOOL_INPUT\"\n\n# Flag if using `npm install` instead of `npm ci` when a lockfile exists\nif echo \"$TOOL_INPUT\" | grep -qE \"npm install\" && [ -f \"package-lock.json\" ]; then\n  if echo \"$TOOL_INPUT\" | grep -qvE \"--ignore-scripts\"; then\n    echo \"[WARNING] Using npm install instead of npm ci, and --ignore-scripts is not set.\"\n    echo \"Lockfile exists — consider: npm ci --ignore-scripts\"\n    echo \"This is safer against supply chain attacks (Shai-Hulud worm uses preinstall hooks).\"\n  fi\nfi\n'"
+          }
+        ]
+      }
+    ]
+  }
+}
